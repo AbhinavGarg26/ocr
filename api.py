@@ -10,6 +10,7 @@ from ocr import extract_device_attributes
 app = FastAPI(title="Device Label OCR API", version="1.0.0")
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_FILES_PER_REQUEST = 10
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
 
 
@@ -20,8 +21,22 @@ def health() -> dict[str, str]:
 
 
 @app.post("/extract")
-async def extract(file: UploadFile = File(...)) -> dict:
-    """Return OCR-extracted device details as JSON key-value pairs."""
+async def extract(files: list[UploadFile] = File(...)) -> dict:
+    """Extract key-value device details from one or more uploaded images."""
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload no more than {MAX_FILES_PER_REQUEST} images per request.",
+        )
+
+    results = []
+    for file in files:
+        results.append(await extract_one(file))
+    return {"results": results}
+
+
+async def extract_one(file: UploadFile) -> dict:
+    """Extract attributes for one upload and remove its temporary file."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(
@@ -40,7 +55,10 @@ async def extract(file: UploadFile = File(...)) -> dict:
         with NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
             temp_file.write(image_bytes)
             temp_path = temp_file.name
-        return extract_device_attributes(temp_path)
+        return {
+            "filename": file.filename,
+            "attributes": extract_device_attributes(temp_path),
+        }
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail="The uploaded file is not a readable image.") from exc
     finally:
