@@ -8,7 +8,7 @@ WORKDIR /app
 # pytesseract is a Python wrapper; the actual OCR engine must be installed
 # separately in the deployment image.
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y tesseract-ocr \
+    && apt-get install --no-install-recommends -y tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

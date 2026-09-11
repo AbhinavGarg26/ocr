@@ -16,6 +16,7 @@ env/
 ENV/
 .env
 .env.*
+uploads/
 
 # Packaging and build output
 build/
