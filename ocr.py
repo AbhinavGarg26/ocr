@@ -13,6 +13,7 @@ Usage:
 import re
 import sys
 import os
+from urllib.parse import unquote
 import cv2
 import numpy as np
 import pytesseract
@@ -39,7 +40,7 @@ PATTERNS = {
     # In blurred camera labels the final I is commonly read as ! or 1.
     "imei1": r"(?:I|\\)ME[!I1]\s*1:?\s*((?:\d\s*){15})",
     "imei2": r"(?:I|1|\\)ME[!I1]?\s*1?\s*2:?\s*((?:\d\s*){15})",
-    "part_number": r"(?:\(?1P\)?\s*)?(?:PART\s*(?:NO\.?|NUMBER)|P/?N|SKU):?\s*([A-Z0-9/-]{6,})",
+    "part_number": r"(?:\(?1P\)?\s*)?(?:PART\s*(?:NO\.?|NUMBER)|P/?N|SKU):?\s*([A-Z0-9/#-]{6,})",
     "bis_registration": r"(R-\d{6,8})",
     "sar_head": r"SAR:?\s*([\d.]+)\s*W/?kg@1g\s*\(?HEAD\)?",
     "sar_body": r"([\d.]+)\s*W/?kg@1g\s*\(?BODY\)?",
@@ -312,6 +313,17 @@ def ocr_aiplus_identifier_region(image_path: str) -> str:
     return pytesseract.image_to_string(label, config="--psm 6")
 
 
+def ocr_hp_victus_label(image_path: str) -> str:
+    """Read the central Victus product label on a tall HP box photograph."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    label = image[int(height * 0.28):int(height * 0.72), int(width * 0.25):int(width * 0.72)]
+    if label.size == 0:
+        return ""
+    label = cv2.resize(label, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(label, config="--psm 6")
+
+
 def ocr_apple_model_region(image_path: str) -> str:
     """Read the lower model-number row of an Apple-style accessory label."""
     image = load_image(image_path)
@@ -543,6 +555,16 @@ def extract_attributes(text: str) -> dict:
         if ai_plus_config:
             attributes["ram"] = f"{ai_plus_config.group(1)}GB"
             attributes["storage"] = f"{ai_plus_config.group(2)}GB"
+
+    # HP Victus side labels put the marketing name and the 15-fa… code on
+    # separate rows, rather than using a conventional ``Model:`` heading.
+    hp_name = re.search(r"\b(VICTUS\s+BY\s+HP\s+GAMING\s+LAPTOP)\b", text, re.IGNORECASE)
+    hp_model = re.search(r"\b(15-[A-Z]{2}\d{4}[A-Z]{2})\b", text, re.IGNORECASE)
+    if hp_name or hp_model:
+        if hp_name:
+            attributes["model_name"] = "Victus by HP Gaming Laptop"
+        if hp_model:
+            attributes["model_code"] = hp_model.group(1)
 
     # iPad retail boxes print their marketing name and capacity near the top,
     # while the part/color/model/serial details are grouped below the BIS mark.
@@ -988,6 +1010,25 @@ def extract_device_attributes(image_path: str) -> dict:
                 and is_valid_imei(aiplus_identifiers.get(field) or "")
             ):
                 attributes[field] = aiplus_identifiers[field]
+
+    hp_qr = next(
+        (value for value in barcode_values if "hpsmart.com/qrc/" in value.lower()),
+        None,
+    )
+    is_hp_victus = bool(hp_qr or re.search(r"\bVICTUS\b", text, re.IGNORECASE))
+    if is_hp_victus:
+        hp_attributes = extract_attributes(ocr_hp_victus_label(image_path))
+        for field in ("model_code", "model_name", "part_number", "serial_number"):
+            if not attributes.get(field) and hp_attributes.get(field):
+                attributes[field] = hp_attributes[field]
+
+        # HP's QR payload has the serial after /21/ and the P/N in the 240
+        # parameter.  Decode it because this is more precise than label OCR.
+        if hp_qr:
+            hp_qr_match = re.search(r"/21/([A-Z0-9]+)\?240=([^?]+)", hp_qr, re.IGNORECASE)
+            if hp_qr_match:
+                attributes["serial_number"] = hp_qr_match.group(1).upper()
+                attributes["part_number"] = unquote(hp_qr_match.group(2)).upper()
 
     # A compact Apple side label may be the only readable source of its A-model
     # and 1P part number.  Its S-prefixed serial barcode is a reliable signal
