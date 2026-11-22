@@ -498,6 +498,30 @@ def extract_attributes(text: str) -> dict:
                 attributes["storage"] = "128GB"
                 attributes["ram"] = "8GB"
 
+    # AI+ labels identify the device by SKU rather than a separate model-code
+    # field.  Their compact memory row may lose the divider, for example
+    # ``6GB1128GB`` for the printed ``6GB | 128GB``.
+    ai_plus_sku = re.search(r"\bSKU\s*:\s*(AIP\d{3}PUR[0-9A-Z])\b", text, re.IGNORECASE)
+    ai_plus_pulse = re.search(r"\bPULSE\s*2\b", text, re.IGNORECASE)
+    if ai_plus_sku or ai_plus_pulse:
+        ai_plus_code = ai_plus_sku.group(1).upper() if ai_plus_sku else None
+        if ai_plus_code:
+            # The small 4 in the printed SKU is commonly read as S.
+            ai_plus_code = re.sub(r"PURS$", "PUR4", ai_plus_code)
+            attributes["model_code"] = ai_plus_code
+            attributes["part_number"] = ai_plus_code
+        if ai_plus_pulse:
+            attributes["model_name"] = "AI+ Pulse 2"
+
+        ai_plus_config = re.search(
+            r"\b(4|6|8|12)\s*GB\s*(?:[|+/]\s*)?1?\s*(64|128|256|512)\s*GB\b",
+            text,
+            re.IGNORECASE,
+        )
+        if ai_plus_config:
+            attributes["ram"] = f"{ai_plus_config.group(1)}GB"
+            attributes["storage"] = f"{ai_plus_config.group(2)}GB"
+
     # iPad retail boxes print their marketing name and capacity near the top,
     # while the part/color/model/serial details are grouped below the BIS mark.
     # Prefer that name over an A-number-only fallback.
