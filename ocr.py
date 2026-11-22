@@ -493,7 +493,7 @@ def extract_attributes(text: str) -> dict:
         else:
             # On glare-heavy photos the badge separators disappear entirely,
             # producing ``[12686]`` for the printed ``[128+8G]``.
-            compressed_config = re.search(r"[\[(]\s*12[68]\s*8[6G]\s*[\])]", text)
+            compressed_config = re.search(r"[\[(]\s*12[68]\s*8[6G]\b", text)
             if compressed_config:
                 attributes["storage"] = "128GB"
                 attributes["ram"] = "8GB"
