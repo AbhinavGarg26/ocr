@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
-from ocr import extract_device_attributes
+from ocr import extract_device_attributes, scan_image
 
 app = FastAPI(title="Device Label OCR API", version="1.0.0")
 
@@ -50,8 +50,41 @@ async def extract(
     return {"results": results}
 
 
+@app.post("/scan")
+async def scan(
+    files: Annotated[list[UploadFile] | None, File()] = None,
+    file: Annotated[UploadFile | None, File()] = None,
+    image: Annotated[UploadFile | None, File()] = None,
+) -> dict:
+    """Return raw OCR text and decoded barcodes without attribute parsing."""
+    uploads = list(files or [])
+    uploads.extend(upload for upload in (file, image) if upload is not None)
+    if not uploads:
+        raise HTTPException(
+            status_code=422,
+            detail="Upload an image using the multipart field name files, file, or image.",
+        )
+    if len(uploads) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload no more than {MAX_FILES_PER_REQUEST} images per request.",
+        )
+
+    return {"results": [await scan_one(upload) for upload in uploads]}
+
+
 async def extract_one(file: UploadFile) -> dict:
     """Extract attributes for one upload and remove its temporary file."""
+    return await process_one(file, lambda path: {"attributes": extract_device_attributes(path)})
+
+
+async def scan_one(file: UploadFile) -> dict:
+    """Scan raw label text/barcodes for one upload and remove its temporary file."""
+    return await process_one(file, scan_image)
+
+
+async def process_one(file: UploadFile, process_image) -> dict:
+    """Save one checked upload temporarily, process it, then always clean up."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(
@@ -77,10 +110,7 @@ async def extract_one(file: UploadFile) -> dict:
         with NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
             temp_file.write(image_bytes)
             temp_path = temp_file.name
-        result = {
-            "filename": file.filename,
-            "attributes": extract_device_attributes(temp_path),
-        }
+        result = {"filename": file.filename, **process_image(temp_path)}
         if debug_image_id:
             result["debug_image_id"] = debug_image_id
         return result
