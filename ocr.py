@@ -490,6 +490,13 @@ def extract_attributes(text: str) -> dict:
                 storage, ram = "128", "8"
             attributes["storage"] = f"{storage}GB"
             attributes["ram"] = f"{ram}GB"
+        else:
+            # On glare-heavy photos the badge separators disappear entirely,
+            # producing ``[12686]`` for the printed ``[128+8G]``.
+            compressed_config = re.search(r"[\[(]\s*12[68]\s*8[6G]\s*[\])]", text)
+            if compressed_config:
+                attributes["storage"] = "128GB"
+                attributes["ram"] = "8GB"
 
     # iPad retail boxes print their marketing name and capacity near the top,
     # while the part/color/model/serial details are grouped below the BIS mark.
