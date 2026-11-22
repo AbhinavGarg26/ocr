@@ -558,7 +558,7 @@ def extract_attributes(text: str) -> dict:
 
     # HP Victus side labels put the marketing name and the 15-fa… code on
     # separate rows, rather than using a conventional ``Model:`` heading.
-    hp_name = re.search(r"\b(VICTUS\s+BY\s+HP\s+GAMING\s+LAPTOP)\b", text, re.IGNORECASE)
+    hp_name = re.search(r"\bVICTUS\s+BY\s+HP\s+GAMING\b", text, re.IGNORECASE)
     hp_model = re.search(r"\b(15-[A-Z]{2}\d{4}[A-Z]{2})\b", text, re.IGNORECASE)
     if hp_name or hp_model:
         if hp_name:
