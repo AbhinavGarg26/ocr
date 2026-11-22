@@ -256,12 +256,20 @@ def ocr_samsung_label_region(image_path: str) -> str:
     """Read the compact dual-IMEI area on Samsung side labels."""
     image = load_image(image_path)
     height, width = image.shape[:2]
-    # Samsung's printed IMEI rows span the middle of its horizontal side label.
-    label = image[int(height * 0.42):int(height * 0.68), int(width * 0.15):int(width * 0.95)]
-    if label.size == 0:
+    # The upper IMEI line is duplicated on Samsung side labels and is clearer
+    # than the lower return-policy line.  Put it first so its values win.
+    upper_label = image[int(height * 0.48):int(height * 0.61), int(width * 0.18):int(width * 0.92)]
+    wider_label = image[int(height * 0.42):int(height * 0.68), int(width * 0.15):int(width * 0.95)]
+    if upper_label.size == 0 or wider_label.size == 0:
         return ""
-    label = cv2.resize(label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-    return pytesseract.image_to_string(label, config="--psm 6")
+    upper_label = cv2.resize(upper_label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    wider_label = cv2.resize(wider_label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    return "\n".join(
+        (
+            pytesseract.image_to_string(upper_label, config="--psm 6"),
+            pytesseract.image_to_string(wider_label, config="--psm 6"),
+        )
+    )
 
 
 def ocr_apple_model_region(image_path: str) -> str:
@@ -907,12 +915,16 @@ def extract_device_attributes(image_path: str) -> dict:
     if is_samsung_label and (
         not attributes.get("imei1")
         or not attributes.get("imei2")
+        or not is_valid_imei(attributes.get("imei2") or "")
         or not attributes.get("ram")
         or not attributes.get("color")
     ):
         samsung_attributes = extract_attributes(ocr_samsung_label_region(image_path))
         for field in ("imei1", "imei2", "ram", "storage", "color"):
-            if not attributes.get(field) and samsung_attributes.get(field):
+            if (
+                (not attributes.get(field) or (field == "imei2" and not is_valid_imei(attributes.get(field))))
+                and samsung_attributes.get(field)
+            ):
                 attributes[field] = samsung_attributes[field]
 
     if (
