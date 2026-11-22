@@ -859,6 +859,16 @@ def extract_device_attributes(image_path: str) -> dict:
             for value in focused_barcode_values:
                 if value not in barcode_values:
                     barcode_values.append(value)
+            # Prefer a valid Apple A-number from the combined crop passes over
+            # an earlier OCR candidate containing letter-like digit errors.
+            apple_model = re.search(
+                r"\bMODEL\s*(?:NO\.?)?\s*[:.,]?\s*(A\d{4,5})\b",
+                apple_label_text,
+                re.IGNORECASE,
+            )
+            if apple_model:
+                attributes["model_code"] = apple_model.group(1).upper()
+                attributes["model_name"] = attributes["model_code"]
 
     if (
         not attributes.get("imei1")
