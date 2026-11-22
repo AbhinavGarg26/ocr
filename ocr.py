@@ -819,20 +819,35 @@ def extract_device_attributes(image_path: str) -> dict:
     # A compact Apple side label may be the only readable source of its A-model
     # and 1P part number.  Its S-prefixed serial barcode is a reliable signal
     # to attempt the focused crop without applying that work to other labels.
-    has_apple_serial_barcode = any(
-        re.fullmatch(r"S[A-Z0-9]{8,}", value) for value in barcode_values
+    has_apple_serial_barcode = any(re.fullmatch(r"S[A-Z0-9]{8,}", value) for value in barcode_values)
+    has_apple_model = bool(re.fullmatch(r"A\d{4,5}", attributes.get("model_code") or "", re.IGNORECASE))
+    has_primary_device_field = any(
+        attributes.get(field) for field in ("model_code", "part_number", "imei1", "imei2")
     )
-    if has_apple_serial_barcode or re.fullmatch(
-        r"A\d{4,5}", attributes.get("model_code") or "", re.IGNORECASE
-    ):
+    has_upc = any(re.fullmatch(r"\d{12,13}", value) for value in barcode_values)
+    # Some camera angles hide the serial and Model No. rows from full-frame
+    # OCR.  An otherwise unidentified UPC product gets one focused attempt;
+    # fields are merged only if that attempt proves it is an Apple label.
+    if has_apple_serial_barcode or has_apple_model or (not has_primary_device_field and has_upc):
+        focused_barcode_values = apple_accessory_barcode_values(image_path)
+        has_apple_part_barcode = any(
+            re.fullmatch(r"1P[A-Z0-9]+/[A-Z]", value) for value in focused_barcode_values
+        )
+        has_apple_serial_barcode = has_apple_serial_barcode or any(
+            re.fullmatch(r"S[A-Z0-9]{8,}", value) for value in focused_barcode_values
+        )
         apple_label_text = ocr_apple_accessory_label(image_path)
         apple_label_attributes = extract_attributes(apple_label_text)
-        for field in ("model_code", "model_name", "part_number", "serial_number"):
-            if not attributes.get(field) and apple_label_attributes.get(field):
-                attributes[field] = apple_label_attributes[field]
-        for value in apple_accessory_barcode_values(image_path):
-            if value not in barcode_values:
-                barcode_values.append(value)
+        is_apple_label = has_apple_part_barcode or has_apple_serial_barcode or bool(
+            re.fullmatch(r"A\d{4,5}", apple_label_attributes.get("model_code") or "", re.IGNORECASE)
+        )
+        if is_apple_label:
+            for field in ("model_code", "model_name", "part_number", "serial_number"):
+                if not attributes.get(field) and apple_label_attributes.get(field):
+                    attributes[field] = apple_label_attributes[field]
+            for value in focused_barcode_values:
+                if value not in barcode_values:
+                    barcode_values.append(value)
 
     if (
         not attributes.get("imei1")
