@@ -315,7 +315,7 @@ def extract_attributes(text: str) -> dict:
     # code and the configuration is presented in a compact pipe-separated row.
     if not attributes["model_code"]:
         match = re.search(
-            r"\bMOD(?:EL|E[!I])\s*(?:NO\.?|NUMBER)?\s*:?\s*([A-Z0-9-]{4,})\b",
+            r"\bMOD(?:EL|E[!I])\s*(?:NO\.?|NUMBER)?\s*[:.,]?\s*([A-Z0-9-]{4,})\b",
             text,
             re.IGNORECASE,
         )
