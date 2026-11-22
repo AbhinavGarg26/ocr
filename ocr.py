@@ -746,15 +746,26 @@ def ocr_apple_accessory_label(image_path: str) -> str:
     """Read Apple accessory side labels when full-frame OCR misses the text."""
     image = load_image(image_path)
     height, width = image.shape[:2]
-    label = image[int(height * 0.40):int(height * 0.78), int(width * 0.20):int(width * 0.90)]
-    if label.size == 0:
+    broad_label = image[int(height * 0.40):int(height * 0.78), int(width * 0.20):int(width * 0.90)]
+    model_label = image[int(height * 0.43):int(height * 0.72), int(width * 0.28):int(width * 0.78)]
+    if broad_label.size == 0 or model_label.size == 0:
         return ""
-    gray = cv2.cvtColor(label, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(broad_label, cv2.COLOR_BGR2GRAY)
     enlarged = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
     thresholded = cv2.adaptiveThreshold(
         enlarged, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 8
     )
-    return pytesseract.image_to_string(thresholded, config="--psm 6")
+    # The pale "Model No." row can disappear in thresholded output.  A tighter
+    # grayscale crop keeps that row legible while the thresholded pass remains
+    # useful for the barcode-adjacent part/serial labels.
+    model_gray = cv2.cvtColor(model_label, cv2.COLOR_BGR2GRAY)
+    model_enlarged = cv2.resize(model_gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    return "\n".join(
+        (
+            pytesseract.image_to_string(thresholded, config="--psm 6"),
+            pytesseract.image_to_string(model_enlarged, config="--psm 6"),
+        )
+    )
 
 
 def imeis_from_barcodes(image_path: str) -> list[str]:
