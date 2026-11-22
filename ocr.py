@@ -513,7 +513,7 @@ def extract_attributes(text: str) -> dict:
             attributes["storage"] = f"{ipad_storage.group(1)}GB"
 
         apple_product_line = re.search(
-            r"\b(M[A-Z0-9]{5,}/[A-Z])\s+(iPad[^\n]+)",
+            r"\b(M[A-Z0-9]{5,7}/[A-Z])\s+(iPad[^\n]+)",
             text,
             re.IGNORECASE,
         )
@@ -536,7 +536,7 @@ def extract_attributes(text: str) -> dict:
     if iphone_name:
         attributes["model_name"] = _clean_field(iphone_name.group(1))
         iphone_product_line = re.search(
-            r"\b(M[A-Z0-9]{5,}/[A-Z])\s+(iPhone[^\n]+)",
+            r"\b(M[A-Z0-9]{5,7}/[A-Z])\s+(iPhone[^\n]+)",
             text,
             re.IGNORECASE,
         )
@@ -907,11 +907,14 @@ def extract_device_attributes(image_path: str) -> dict:
         len(barcode_imeis) >= 2
         and any(re.fullmatch(r"S[A-Z0-9]{8,}", value) for value in barcode_values)
     )
-    text = (
-        ocr_rotated_apple_phone_text(image_path)
-        if is_rotated_apple_phone
-        else ocr_text_adaptive(image_path)
-    )
+    # Dual-IMEI Apple labels can be photographed sideways, but a normal photo
+    # also has the same barcode pattern.  Keep normal OCR when it already
+    # finds an iPhone/iPad product line; otherwise use the rotated recovery.
+    normal_text = ocr_text_adaptive(image_path)
+    if is_rotated_apple_phone and not re.search(r"\b(?:IPHONE|IPAD)\b", normal_text, re.IGNORECASE):
+        text = ocr_rotated_apple_phone_text(image_path)
+    else:
+        text = normal_text
     attributes = extract_attributes(text)
 
     # A compact Apple side label may be the only readable source of its A-model
