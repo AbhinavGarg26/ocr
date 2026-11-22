@@ -290,6 +290,17 @@ def ocr_infinix_label_region(image_path: str) -> str:
     )
 
 
+def ocr_aiplus_specification_table(image_path: str) -> str:
+    """Read the lower AI+ specification table containing the SKU/model code."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    table = image[int(height * 0.56):int(height * 0.88), int(width * 0.05):int(width * 0.78)]
+    if table.size == 0:
+        return ""
+    table = cv2.resize(table, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(table, config="--psm 11")
+
+
 def ocr_apple_model_region(image_path: str) -> str:
     """Read the lower model-number row of an Apple-style accessory label."""
     image = load_image(image_path)
@@ -948,6 +959,12 @@ def extract_device_attributes(image_path: str) -> dict:
     else:
         text = normal_text
     attributes = extract_attributes(text)
+
+    if attributes.get("model_name") == "AI+ Pulse 2" and not attributes.get("model_code"):
+        aiplus_attributes = extract_attributes(ocr_aiplus_specification_table(image_path))
+        for field in ("model_code", "model_name", "part_number", "ram", "storage"):
+            if not attributes.get(field) and aiplus_attributes.get(field):
+                attributes[field] = aiplus_attributes[field]
 
     # A compact Apple side label may be the only readable source of its A-model
     # and 1P part number.  Its S-prefixed serial barcode is a reliable signal
