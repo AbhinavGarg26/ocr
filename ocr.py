@@ -513,13 +513,21 @@ def extract_attributes(text: str) -> dict:
             attributes["storage"] = f"{ipad_storage.group(1)}GB"
 
         apple_product_line = re.search(
-            r"\b(M[A-Z0-9]{5,7}/[A-Z])\s+(iPad[^\n]+)",
+            r"\b(M[A-Z0-9]{5,7}/[A-Z])\s+\(?\s*((?:I?Pad)[^\n]+)",
             text,
             re.IGNORECASE,
         )
         if apple_product_line:
             attributes["part_number"] = apple_product_line.group(1).upper()
             product_description = _clean_field(apple_product_line.group(2)) or ""
+            # The small iPad capacity print can turn ``GB`` into ``6B``.
+            ipad_product_storage = re.search(
+                r"\b(64|128|256|512|1024)\s*(?:GB|6B)\b",
+                product_description,
+                re.IGNORECASE,
+            )
+            if ipad_product_storage:
+                attributes["storage"] = f"{ipad_product_storage.group(1)}GB"
             color_match = re.search(
                 r"\b(Silver|Blue|Pink|Yellow|Green|Purple|Black|White|Space Gray|Starlight)\b\s*$",
                 product_description,
