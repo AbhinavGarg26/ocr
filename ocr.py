@@ -301,6 +301,17 @@ def ocr_aiplus_specification_table(image_path: str) -> str:
     return pytesseract.image_to_string(table, config="--psm 11")
 
 
+def ocr_aiplus_identifier_region(image_path: str) -> str:
+    """Read the upper dual-IMEI block on an AI+ package label."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    label = image[int(height * 0.25):int(height * 0.48), int(width * 0.05):int(width * 0.60)]
+    if label.size == 0:
+        return ""
+    label = cv2.resize(label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(label, config="--psm 6")
+
+
 def ocr_apple_model_region(image_path: str) -> str:
     """Read the lower model-number row of an Apple-style accessory label."""
     image = load_image(image_path)
@@ -965,6 +976,18 @@ def extract_device_attributes(image_path: str) -> dict:
         for field in ("model_code", "model_name", "part_number", "ram", "storage"):
             if not attributes.get(field) and aiplus_attributes.get(field):
                 attributes[field] = aiplus_attributes[field]
+
+    if attributes.get("model_name") == "AI+ Pulse 2" and (
+        not is_valid_imei(attributes.get("imei1") or "")
+        or not is_valid_imei(attributes.get("imei2") or "")
+    ):
+        aiplus_identifiers = extract_attributes(ocr_aiplus_identifier_region(image_path))
+        for field in ("imei1", "imei2"):
+            if (
+                (not attributes.get(field) or not is_valid_imei(attributes.get(field)))
+                and is_valid_imei(aiplus_identifiers.get(field) or "")
+            ):
+                attributes[field] = aiplus_identifiers[field]
 
     # A compact Apple side label may be the only readable source of its A-model
     # and 1P part number.  Its S-prefixed serial barcode is a reliable signal
