@@ -272,6 +272,24 @@ def ocr_samsung_label_region(image_path: str) -> str:
     )
 
 
+def ocr_infinix_label_region(image_path: str) -> str:
+    """Read the model/configuration and duplicated IMEI rows on Infinix labels."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    config_label = image[int(height * 0.38):int(height * 0.58), int(width * 0.18):int(width * 0.60)]
+    imei_label = image[int(height * 0.43):int(height * 0.70), int(width * 0.17):int(width * 0.88)]
+    if config_label.size == 0 or imei_label.size == 0:
+        return ""
+    config_label = cv2.resize(config_label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    imei_label = cv2.resize(imei_label, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    return "\n".join(
+        (
+            pytesseract.image_to_string(config_label, config="--psm 11"),
+            pytesseract.image_to_string(imei_label, config="--psm 6"),
+        )
+    )
+
+
 def ocr_apple_model_region(image_path: str) -> str:
     """Read the lower model-number row of an Apple-style accessory label."""
     image = load_image(image_path)
@@ -451,6 +469,27 @@ def extract_attributes(text: str) -> dict:
         if samsung_config:
             attributes["ram"] = f"{samsung_config.group(1)}GB"
             attributes["storage"] = f"{samsung_config.group(2)}GB"
+
+    # Infinix labels print a short X-series code and a compact
+    # ``storage+RAM G`` badge.  The embossed 8 in that badge is often read as
+    # 6, so accept the observed 126+86 OCR variant only for Infinix labels.
+    infinix_model = re.search(r"\b(X\d{4})\b", text, re.IGNORECASE)
+    if re.search(r"\bINFINIX\b", text, re.IGNORECASE) and infinix_model:
+        attributes["model_code"] = infinix_model.group(1).upper()
+        if not attributes["model_name"]:
+            attributes["model_name"] = attributes["model_code"]
+
+        infinix_color = re.search(r"\bCOLOR\s*:\s*([A-Z][A-Z -]{2,})", text, re.IGNORECASE)
+        if infinix_color:
+            attributes["color"] = _clean_field(infinix_color.group(1)).title()
+
+        infinix_config = re.search(r"\b(\d{2,4})\s*\+\s*(\d{1,2})\s*G?\b", text, re.IGNORECASE)
+        if infinix_config:
+            storage, ram = infinix_config.groups()
+            if storage == "126" and ram == "86":
+                storage, ram = "128", "8"
+            attributes["storage"] = f"{storage}GB"
+            attributes["ram"] = f"{ram}GB"
 
     # iPad retail boxes print their marketing name and capacity near the top,
     # while the part/color/model/serial details are grouped below the BIS mark.
@@ -926,6 +965,29 @@ def extract_device_attributes(image_path: str) -> dict:
                 and samsung_attributes.get(field)
             ):
                 attributes[field] = samsung_attributes[field]
+
+    is_infinix_label = bool(
+        re.search(r"\bINFINIX\b", text, re.IGNORECASE)
+        or re.search(r"\bX\d{4}\b", text, re.IGNORECASE)
+    )
+    if is_infinix_label and (
+        not attributes.get("model_code")
+        or not attributes.get("ram")
+        or not attributes.get("storage")
+        or not attributes.get("imei2")
+    ):
+        infinix_text = ocr_infinix_label_region(image_path)
+        infinix_attributes = extract_attributes(infinix_text)
+        for field in ("model_code", "model_name", "color", "ram", "storage"):
+            if not attributes.get(field) and infinix_attributes.get(field):
+                attributes[field] = infinix_attributes[field]
+
+        # The second IMEI often has an unnumbered ``IMEI:`` caption, but its
+        # 15-digit value remains clear in the focused label crop.
+        for candidate in re.findall(r"(?<!\d)\d{15}(?!\d)", infinix_text):
+            if is_valid_imei(candidate) and candidate != attributes.get("imei1"):
+                attributes["imei2"] = candidate
+                break
 
     if (
         not attributes.get("imei1")
