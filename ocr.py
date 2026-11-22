@@ -956,7 +956,7 @@ def extract_device_attributes(image_path: str) -> dict:
                 apple_label_text,
                 re.IGNORECASE,
             )
-            if apple_model:
+            if apple_model and not re.search(r"\b(?:IPHONE|IPAD)\b", text, re.IGNORECASE):
                 attributes["model_code"] = apple_model.group(1).upper()
                 attributes["model_name"] = attributes["model_code"]
 
