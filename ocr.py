@@ -38,7 +38,7 @@ PATTERNS = {
     # a 15-digit IMEI and normalise it after matching.
     # In blurred camera labels the final I is commonly read as ! or 1.
     "imei1": r"(?:I|\\)ME[!I1]\s*1:?\s*((?:\d\s*){15})",
-    "imei2": r"(?:I|\\)ME[!I1]\s*2:?\s*((?:\d\s*){15})",
+    "imei2": r"(?:I|1|\\)ME[!I1]?\s*1?\s*2:?\s*((?:\d\s*){15})",
     "part_number": r"(?:\(?1P\)?\s*)?(?:PART\s*(?:NO\.?|NUMBER)|P/?N|SKU):?\s*([A-Z0-9/-]{6,})",
     "bis_registration": r"(R-\d{6,8})",
     "sar_head": r"SAR:?\s*([\d.]+)\s*W/?kg@1g\s*\(?HEAD\)?",
@@ -252,6 +252,18 @@ def ocr_imei_region(image_path: str) -> str:
     return "\n".join(texts)
 
 
+def ocr_samsung_label_region(image_path: str) -> str:
+    """Read the compact dual-IMEI area on Samsung side labels."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    # Samsung's printed IMEI rows span the middle of its horizontal side label.
+    label = image[int(height * 0.42):int(height * 0.68), int(width * 0.15):int(width * 0.95)]
+    if label.size == 0:
+        return ""
+    label = cv2.resize(label, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(label, config="--psm 6")
+
+
 def ocr_apple_model_region(image_path: str) -> str:
     """Read the lower model-number row of an Apple-style accessory label."""
     image = load_image(image_path)
@@ -315,7 +327,7 @@ def extract_attributes(text: str) -> dict:
     # code and the configuration is presented in a compact pipe-separated row.
     if not attributes["model_code"]:
         match = re.search(
-            r"\bMOD(?:EL|E[!I])\s*(?:NO\.?|NUMBER)?\s*[:.,]?\s*([A-Z0-9-]{4,})\b",
+            r"\bMOD(?:EL|E[!I])\s*(?:NO\.?|NUMBER)?\s*[:.,]?\s*([A-Z0-9/-]{4,})\b",
             text,
             re.IGNORECASE,
         )
@@ -410,6 +422,27 @@ def extract_attributes(text: str) -> dict:
             color_value = _clean_field(vivo_color.group(1))
             if color_value:
                 attributes["color"] = re.sub(r"\bBiue\b", "Blue", color_value, flags=re.IGNORECASE)
+
+    # Samsung side labels use an SM code, a standalone colour line, and a
+    # pipe-separated memory configuration (for example ``8GB | 128GB``).
+    samsung_model = re.search(r"\b(SM-S\d{3,5}[A-Z](?:/DS)?)\b", text, re.IGNORECASE)
+    if samsung_model:
+        attributes["model_code"] = samsung_model.group(1).upper()
+        if not attributes["model_name"]:
+            attributes["model_name"] = attributes["model_code"]
+
+        samsung_color = re.search(r"\b(JET\s*BLACK)\b", text, re.IGNORECASE)
+        if samsung_color:
+            attributes["color"] = re.sub(r"\s+", "", samsung_color.group(1)).title()
+
+        samsung_config = re.search(
+            r"\b(\d{1,3})\s*GB\s*[|/]\s*(\d{2,4})\s*GB\b",
+            text,
+            re.IGNORECASE,
+        )
+        if samsung_config:
+            attributes["ram"] = f"{samsung_config.group(1)}GB"
+            attributes["storage"] = f"{samsung_config.group(2)}GB"
 
     # iPad retail boxes print their marketing name and capacity near the top,
     # while the part/color/model/serial details are grouped below the BIS mark.
@@ -869,6 +902,18 @@ def extract_device_attributes(image_path: str) -> dict:
             if apple_model:
                 attributes["model_code"] = apple_model.group(1).upper()
                 attributes["model_name"] = attributes["model_code"]
+
+    is_samsung_label = bool(re.search(r"\bSM-S\d{3,5}[A-Z](?:/DS)?\b", text, re.IGNORECASE))
+    if is_samsung_label and (
+        not attributes.get("imei1")
+        or not attributes.get("imei2")
+        or not attributes.get("ram")
+        or not attributes.get("color")
+    ):
+        samsung_attributes = extract_attributes(ocr_samsung_label_region(image_path))
+        for field in ("imei1", "imei2", "ram", "storage", "color"):
+            if not attributes.get(field) and samsung_attributes.get(field):
+                attributes[field] = samsung_attributes[field]
 
     if (
         not attributes.get("imei1")
