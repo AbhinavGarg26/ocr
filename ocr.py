@@ -385,7 +385,7 @@ def extract_attributes(text: str) -> dict:
             attributes["color"] = f"{moto_color.group(1).strip().title()})"
 
     if not attributes["display"]:
-        match = re.search(r"\b(\d{1,2}(?:\.\d+)?)\s*(?:\"|INCH(?:ES)?)", text, re.IGNORECASE)
+        match = re.search(r"\b([1-9]\d?(?:\.\d+)?)\s*(?:\"|INCH(?:ES)?)", text, re.IGNORECASE)
         attributes["display"] = f"{match.group(1)}-inch" if match else None
 
     # Vivo labels use a short V-number as their only marketed model identifier.
@@ -726,16 +726,35 @@ def apple_accessory_barcode_values(image_path: str) -> list[str]:
     crops = (
         image[int(height * 0.45):int(height * 0.82), int(width * 0.25):int(width * 0.98)],
         image[int(height * 0.50):int(height * 0.80), int(width * 0.35):int(width * 0.95)],
+        image[int(height * 0.48):int(height * 0.72), int(width * 0.27):int(width * 0.78)],
     )
     values = []
     for crop in crops:
         if crop.size == 0:
             continue
-        for barcode in zxingcpp.read_barcodes(crop):
-            value = barcode.text.strip()
-            if value and value not in values:
-                values.append(value)
+        # The compact 1P barcode can be too small for a full-frame decoder;
+        # retain the original attempt and a scaled version of the same crop.
+        for candidate in (crop, cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)):
+            for barcode in zxingcpp.read_barcodes(candidate):
+                value = barcode.text.strip()
+                if value and value not in values:
+                    values.append(value)
     return values
+
+
+def ocr_apple_accessory_label(image_path: str) -> str:
+    """Read Apple accessory side labels when full-frame OCR misses the text."""
+    image = load_image(image_path)
+    height, width = image.shape[:2]
+    label = image[int(height * 0.40):int(height * 0.78), int(width * 0.20):int(width * 0.90)]
+    if label.size == 0:
+        return ""
+    gray = cv2.cvtColor(label, cv2.COLOR_BGR2GRAY)
+    enlarged = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    thresholded = cv2.adaptiveThreshold(
+        enlarged, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 8
+    )
+    return pytesseract.image_to_string(thresholded, config="--psm 6")
 
 
 def imeis_from_barcodes(image_path: str) -> list[str]:
@@ -796,6 +815,25 @@ def extract_device_attributes(image_path: str) -> dict:
         else ocr_text_adaptive(image_path)
     )
     attributes = extract_attributes(text)
+
+    # A compact Apple side label may be the only readable source of its A-model
+    # and 1P part number.  Its S-prefixed serial barcode is a reliable signal
+    # to attempt the focused crop without applying that work to other labels.
+    has_apple_serial_barcode = any(
+        re.fullmatch(r"S[A-Z0-9]{8,}", value) for value in barcode_values
+    )
+    if has_apple_serial_barcode or re.fullmatch(
+        r"A\d{4,5}", attributes.get("model_code") or "", re.IGNORECASE
+    ):
+        apple_label_text = ocr_apple_accessory_label(image_path)
+        apple_label_attributes = extract_attributes(apple_label_text)
+        for field in ("model_code", "model_name", "part_number", "serial_number"):
+            if not attributes.get(field) and apple_label_attributes.get(field):
+                attributes[field] = apple_label_attributes[field]
+        for value in apple_accessory_barcode_values(image_path):
+            if value not in barcode_values:
+                barcode_values.append(value)
+
     if (
         not attributes.get("imei1")
         or not attributes.get("imei2")
